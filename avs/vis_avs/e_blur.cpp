@@ -62,8 +62,8 @@ E_Blur::~E_Blur() {}
 
 int threading_stuff(int thread_index,
                     int num_threads,
-                    unsigned int* f,
-                    unsigned int* of,
+                    unsigned int* framebuffer_in,
+                    unsigned int* framebuffer_out,
                     int width,
                     int height,
                     int* at_top,
@@ -89,8 +89,8 @@ int threading_stuff(int thread_index,
 
     int skip_pix = start_line * width;
 
-    f += skip_pix;
-    of += skip_pix;
+    framebuffer_in += skip_pix;
+    framebuffer_out += skip_pix;
 
     if (!thread_index) {
         *at_top = 1;
@@ -134,9 +134,12 @@ void E_Blur::smp_render(int this_thread,
         if (at_top) {
             unsigned int* f2 = f + w;
             int x;
-            int adj_tl = 0, adj_tl2 = 0;
+            int adj_tl = 0;
+            int adj_tl2 = 0;
+
             if (this->config.round == BLUR_ROUND_UP) {
                 adj_tl = 0x03030303;
+
                 adj_tl2 = 0x04040404;
             }
             // top left
@@ -194,7 +197,7 @@ void E_Blur::smp_render(int this_thread,
                 f3++;
 
                 // middle of line
-#ifdef NO_MMX
+
                 x = (w - 2) / 4;
                 if (this->config.round == BLUR_ROUND_UP) {
                     while (x--) {
@@ -227,189 +230,7 @@ void E_Blur::smp_render(int this_thread,
                         of += 4;
                     }
                 }
-#else
-                {
-#ifdef _MSC_VER  // MSVC asm
-                    __asm {
-            mov ecx, w
-            mov edx, ecx
-            mov ebx, edx
-            neg ebx
-            mov esi, f
-            mov edi, of
-            sub ecx, 2
-            shr ecx, 2
-            movq mm1, [esi-4]
-            align 16
-mmx_light_blur_loop:
-            movq mm0, [esi]
 
-            movq mm2, [esi+4]
-            pand mm0, mmx_mask1
-
-            movq mm5, mm2
-            psrl mm0, 1
-
-            movq mm7, [esi+8]
-            movq mm4, mm0
-
-            pand mm1, mmx_mask4
-            pand mm4, mmx_mask1
-
-            movq mm3, [esi+edx*4]
-            psrl mm4, 1
-
-            paddb mm0, mm4
-            pand mm2, mmx_mask4
-
-            movq mm4, [esi+ebx*4]
-            pand mm3, mmx_mask4
-
-            pand mm4, mmx_mask4
-
-            psrl mm1, 4
-            pand mm7, mmx_mask1
-
-            movq mm6, [esi+12]
-
-            psrl mm2, 4
-            add esi, 16
-
-            psrl mm3, 4
-
-            paddb mm0, mm1
-            psrl mm4, 4
-
-            movq mm1, mm6
-            psrl mm7, 1
-
-            paddb mm2, mm3
-            paddb mm0, mm4
-
-            movq mm3, [esi+edx*4-8]
-            paddb mm0, mm2
-
-            movq mm4, [esi+ebx*4-8]
-            paddb mm0, [adj2]
-
-            pand mm6, mmx_mask4
-
-            movq [edi],mm0
-            pand mm5, mmx_mask4
-
-            movq mm0, mm7
-            pand mm3, mmx_mask4
-
-            psrl mm6, 4
-            pand mm0, mmx_mask1
-
-            pand mm4, mmx_mask4
-            psrl mm5, 4
-
-            psrl mm0, 1
-            paddb mm7, mm6
-
-            paddb mm7, mm0
-            add edi, 16
-
-            psrl mm3, 4
-
-            psrl mm4, 4
-            paddb mm5, mm3
-
-            paddb mm7, mm4
-            dec ecx
-
-            paddb mm7, mm5
-            paddb mm7, [adj2]
-
-            movq [edi-8],mm7
-
-            jnz mmx_light_blur_loop
-            mov of, edi
-            mov f, esi
-                    }
-                    ;
-#else            // _MSC_VER, GCC asm
-                    __asm__ __volatile__(
-                        "mov    %%ecx, %[w]\n\t"
-                        "mov    %%edx, %%ecx\n\t"
-                        "mov    %%ebx, %%edx\n\t"
-                        "neg    %%ebx\n\t"
-                        "mov    %%esi, %[f]\n\t"
-                        "mov    %%edi, %[of]\n\t"
-                        "sub    %%ecx, 2\n\t"
-                        "shr    %%ecx, 2\n\t"
-                        "movq   %%mm1, [%%esi-4]\n\t"
-                        ".align 16\n\t"
-                        "mmx_light_blur_loop:\n\t"
-                        "movq   %%mm0, [%%esi]\n\t"
-                        "movq   %%mm2, [%%esi+4]\n\t"
-                        "pand   %%mm0, %[mmx_mask1]\n\t"
-                        "movq   %%mm5, %%mm2\n\t"
-                        "psrlq  %%mm0, 1\n\t"
-                        "movq   %%mm7, [%%esi+8]\n\t"
-                        "movq   %%mm4, %%mm0\n\t"
-                        "pand   %%mm1, %[mmx_mask4]\n\t"
-                        "pand   %%mm4, %[mmx_mask1]\n\t"
-                        "movq   %%mm3, [%%esi+edx*4]\n\t"
-                        "psrlq  %%mm4, 1\n\t"
-                        "paddb  %%mm0, %%mm4\n\t"
-                        "pand   %%mm2, %[mmx_mask4]\n\t"
-                        "movq   %%mm4, [%%esi+ebx*4]\n\t"
-                        "pand   %%mm3, %[mmx_mask4]\n\t"
-                        "pand   %%mm4, %[mmx_mask4]\n\t"
-                        "psrlq  %%mm1, 4\n\t"
-                        "pand   %%mm7, %[mmx_mask1]\n\t"
-                        "movq   %%mm6, [%%esi + 12]\n\t"
-                        "psrlq  %%mm2, 4\n\t"
-                        "add    %%esi, 16\n\t"
-                        "psrlq  %%mm3, 4\n\t"
-                        "paddb  %%mm0, %%mm1\n\t"
-                        "psrlq  %%mm4, 4\n\t"
-                        "movq   %%mm1, %%mm6\n\t"
-                        "psrlq  %%mm7, 1\n\t"
-                        "paddb  %%mm2, %%mm3\n\t"
-                        "paddb  %%mm0, %%mm4\n\t"
-                        "movq   %%mm3, [%%esi + edx * 4 - 8]\n\t"
-                        "paddb  %%mm0, %%mm2\n\t"
-                        "movq   %%mm4, [%%esi + ebx * 4 - 8]\n\t"
-                        "paddb  %%mm0, [%[adj2]]\n\t"
-                        "pand   %%mm6, %[mmx_mask4]\n\t"
-                        "movq   [%%edi], %%mm0\n\t"
-                        "pand   %%mm5, %[mmx_mask4]\n\t"
-                        "movq   %%mm0, %%mm7\n\t"
-                        "pand   %%mm3, %[mmx_mask4]\n\t"
-                        "psrlq  %%mm6, 4\n\t"
-                        "pand   %%mm0, %[mmx_mask1]\n\t"
-                        "pand   %%mm4, %[mmx_mask4]\n\t"
-                        "psrlq  %%mm5, 4\n\t"
-                        "psrlq  %%mm0, 1\n\t"
-                        "paddb  %%mm7, %%mm6\n\t"
-                        "paddb  %%mm7, %%mm0\n\t"
-                        "add    %%edi, 16\n\t"
-                        "psrlq  %%mm3, 4\n\t"
-                        "psrlq  %%mm4, 4\n\t"
-                        "paddb  %%mm5, %%mm3\n\t"
-                        "paddb  %%mm7, %%mm4\n\t"
-                        "dec    %%ecx\n\t"
-                        "paddb  %%mm7, %%mm5\n\t"
-                        "paddb  %%mm7, [%[adj2]]\n\t"
-                        "movq   [%%edi - 8], %%mm7\n\t"
-                        "jnz    mmx_light_blur_loop\n\t"
-                        "mov    %[of], %%edi\n\t"
-                        "mov    %[f], %%esi\n\t"
-                        : [f] "=m"(f), [of] "=m"(of)
-                        : [w] "m"(w),
-                          [adj2] "m"(adj2),
-                          [mmx_mask1] "m"(mmx_mask1),
-                          [mmx_mask4] "m"(mmx_mask4)
-                        : "ebx", "ecx", "edx", "esi", "edi");
-#endif           // _MSC_VER
-                    f2 = f + w;  // update these bitches
-                    f3 = f - w;
-                }
-#endif
                 x = (w - 2) & 3;
                 while (x--) {
                     *of++ = DIV_2(f[0]) + DIV_4(f[0]) + DIV_16(f[1]) + DIV_16(f[-1])
@@ -526,7 +347,6 @@ mmx_light_blur_loop:
                 f3++;
 
                 // middle of line
-#ifdef NO_MMX
                 x = (w - 2) / 4;
                 if (this->config.round == BLUR_ROUND_UP) {
                     while (x--) {
@@ -556,155 +376,7 @@ mmx_light_blur_loop:
                         of += 4;
                     }
                 }
-#else
-                {
-#ifdef _MSC_VER  // MSVC asm
-                    __asm {
-            mov ecx, w
-            mov edx, ecx
-            mov ebx, edx
-            neg ebx
-            mov esi, f
-            mov edi, of
-            sub ecx, 2
-            shr ecx, 2
-            movq mm1, [esi-4]
-            align 16
-mmx_heavy_blur_loop:
-            movq mm2, [esi+4]
-            pxor mm0, mm0
 
-            movq mm5, mm2
-            pxor mm7, mm7
-
-            movq mm3, [esi+edx*4]
-            pand mm1, mmx_mask2
-
-            movq mm4, [esi+ebx*4]
-            pand mm2, mmx_mask2
-
-            pand mm3, mmx_mask2
-            pand mm4, mmx_mask2
-
-            psrl mm1, 2
-
-            movq mm6, [esi+12]
-            psrl mm2, 2
-
-            psrl mm3, 2
-
-            paddb mm0, mm1
-            psrl mm4, 2
-
-            movq mm1, mm6
-
-            paddb mm2, mm3
-            paddb mm0, mm4
-
-            movq mm3, [esi+edx*4+8]
-            paddb mm0, mm2
-
-            movq mm4, [esi+ebx*4+8]
-            paddb mm0, [adj2]
-
-            pand mm6, mmx_mask2
-
-            movq [edi],mm0
-            pand mm5, mmx_mask2
-
-            pand mm3, mmx_mask2
-            add esi, 16
-
-            psrl mm6, 2
-            pand mm4, mmx_mask2
-
-            psrl mm5, 2
-            paddb mm7, mm6
-
-            psrl mm3, 2
-            add edi, 16
-
-            psrl mm4, 2
-            paddb mm5, mm3
-
-            paddb mm7, mm4
-
-            paddb mm7, mm5
-            paddb mm7, [adj2]
-
-            movq [edi-8],mm7
-
-            dec ecx
-            jnz mmx_heavy_blur_loop
-            mov of, edi
-            mov f, esi
-                    }
-                    ;
-#else            // _MSC_VER, GCC asm
-                    __asm__ __volatile__(
-                        "mov    %%ecx, %[w]\n\t"
-                        "mov    %%edx, %%ecx\n\t"
-                        "mov    %%ebx, %%edx\n\t"
-                        "neg    %%ebx\n\t"
-                        "mov    %%esi, %[f]\n\t"
-                        "mov    %%edi, %[of]\n\t"
-                        "sub    %%ecx, 2\n\t"
-                        "shr    %%ecx, 2\n\t"
-                        "movq   %%mm1, [%%esi-4]\n\t"
-                        ".align 16\n"
-                        "mmx_heavy_blur_loop:\n\t"
-                        "movq   %%mm2, [%%esi + 4]\n\t"
-                        "pxor   %%mm0, %%mm0\n\t"
-                        "movq   %%mm5, %%mm2\n\t"
-                        "pxor   %%mm7, %%mm7\n\t"
-                        "movq   %%mm3, [%%esi + %%edx * 4]\n\t"
-                        "pand   %%mm1, %[mmx_mask2]\n\t"
-                        "movq   %%mm4, [%%esi + %%ebx * 4]\n\t"
-                        "pand   %%mm2, %[mmx_mask2]\n\t"
-                        "pand   %%mm3, %[mmx_mask2]\n\t"
-                        "pand   %%mm4, %[mmx_mask2]\n\t"
-                        "psrlq  %%mm1, 2\n\t"
-                        "movq   %%mm6, [%%esi+12]\n\t"
-                        "psrlq  %%mm2, 2\n\t"
-                        "psrlq  %%mm3, 2\n\t"
-                        "paddb  %%mm0, %%mm1\n\t"
-                        "psrlq  %%mm4, 2\n\t"
-                        "movq   %%mm1, %%mm6\n\t"
-                        "paddb  %%mm2, %%mm3\n\t"
-                        "paddb  %%mm0, %%mm4\n\t"
-                        "movq   %%mm3, [%%esi + %%edx * 4 + 8]\n\t"
-                        "paddb  %%mm0, %%mm2\n\t"
-                        "movq   %%mm4, [%%esi + %%ebx * 4 + 8]\n\t"
-                        "paddb  %%mm0, [%[adj2]]\n\t"
-                        "pand   %%mm6, %[mmx_mask2]\n\t"
-                        "movq   [%%edi], %%mm0\n\t"
-                        "pand   %%mm5, %[mmx_mask2]\n\t"
-                        "pand   %%mm3, %[mmx_mask2]\n\t"
-                        "add    %%esi, 16\n\t"
-                        "psrlq  %%mm6, 2\n\t"
-                        "pand   %%mm4, %[mmx_mask2]\n\t"
-                        "psrlq  %%mm5, 2\n\t"
-                        "paddb  %%mm7, %%mm6\n\t"
-                        "psrlq  %%mm3, 2\n\t"
-                        "add    %%edi, 16\n\t"
-                        "psrlq  %%mm4, 2\n\t"
-                        "paddb  %%mm5, %%mm3\n\t"
-                        "paddb  %%mm7, %%mm4\n\t"
-                        "paddb  %%mm7, %%mm5\n\t"
-                        "paddb  %%mm7, [%[adj2]]\n\t"
-                        "movq   [%%edi - 8], %%mm7\n\t"
-                        "dec    %%ecx\n\t"
-                        "jnz    mmx_heavy_blur_loop\n\t"
-                        "mov    %[of], %%edi\n\t"
-                        "mov    %[f], %%esi\n\t"
-                        : [f] "=m"(f), [of] "=m"(of)
-                        : [w] "m"(w), [mmx_mask2] "m"(mmx_mask2), [adj2] "m"(adj2)
-                        : "ebx", "ecx", "edx", "esi", "edi");
-#endif           // _MSC_VER
-                    f2 = f + w;  // update these bitches
-                    f3 = f - w;
-                }
-#endif
                 x = (w - 2) & 3;
                 while (x--) {
                     *of++ = DIV_4(f[1]) + DIV_4(f[-1]) + DIV_4(f2[0]) + DIV_4(f3[0])
@@ -820,7 +492,6 @@ mmx_heavy_blur_loop:
                 f3++;
 
                 // middle of line
-#ifdef NO_MMX
                 x = (w - 2) / 4;
                 if (this->config.round == BLUR_ROUND_UP) {
                     while (x--) {
@@ -853,168 +524,7 @@ mmx_heavy_blur_loop:
                         of += 4;
                     }
                 }
-#else
-                {
-#ifdef _MSC_VER  // MSVC asm
-                    __asm {
-            mov ecx, w
-            mov edx, ecx
-            mov ebx, edx
-            neg ebx
-            mov esi, f
-            mov edi, of
-            sub ecx, 2
-            shr ecx, 2
-            movq mm1, [esi-4]
-            align 16
-mmx_normal_blur_loop:
-            movq mm0, [esi]
 
-            movq mm2, [esi+4]
-            pand mm0, mmx_mask1
-
-            movq mm5, mm2
-
-            movq mm7, [esi+8]
-            pand mm1, mmx_mask3
-
-            movq mm3, [esi+edx*4]
-            pand mm2, mmx_mask3
-
-            movq mm4, [esi+ebx*4]
-            pand mm3, mmx_mask3
-
-            psrl mm0, 1
-            pand mm4, mmx_mask3
-
-            psrl mm1, 3
-            pand mm7, mmx_mask1
-
-            movq mm6, [esi+12]
-            psrl mm2, 3
-
-            add esi, 16
-            psrl mm3, 3
-
-            paddb mm0, mm1
-            psrl mm4, 3
-
-            movq mm1, mm6
-
-            paddb mm2, mm3
-            paddb mm0, mm4
-
-            movq mm3, [esi+edx*4-8]
-            paddb mm0, mm2
-
-            movq mm4, [esi+ebx*4-8]
-            paddb mm0, [adj2]
-
-            pand mm6, mmx_mask3
-
-            movq [edi],mm0
-            pand mm5, mmx_mask3
-
-            psrl mm7, 1
-            pand mm3, mmx_mask3
-
-            psrl mm6, 3
-            pand mm4, mmx_mask3
-
-            psrl mm5, 3
-            paddb mm7, mm6
-
-            add edi, 16
-            psrl mm3, 3
-
-            psrl mm4, 3
-            paddb mm5, mm3
-
-            paddb mm7, mm4
-            dec ecx
-
-            paddb mm7, mm5
-            paddb mm7, [adj2]
-
-            movq [edi-8],mm7
-
-            jnz mmx_normal_blur_loop
-            mov of, edi
-            mov f, esi
-                    }
-                    ;
-#else            // _MSC_VER, GCC asm
-                    __asm__ __volatile__(
-                        "mov    %%ecx, %[w]\n\t"
-                        "mov    %%edx, %%ecx\n\t"
-                        "mov    %%ebx, %%edx\n\t"
-                        "neg    %%ebx\n\t"
-                        "mov    %%esi, %[f]\n\t"
-                        "mov    %%edi, %[of]\n\t"
-                        "sub    %%ecx, 2\n\t"
-                        "shr    %%ecx, 2\n\t"
-                        "movq   %%mm1, [%%esi - 4]\n\t"
-                        ".align 16\n"
-                        "mmx_normal_blur_loop:\n\t"
-                        "movq   %%mm0, [%%esi]\n\t"
-                        "movq   %%mm2, [%%esi + 4]\n\t"
-                        "pand   %%mm0, %[mmx_mask1]\n\t"
-                        "movq   %%mm5, %%mm2\n\t"
-                        "movq   %%mm7, [%%esi + 8]\n\t"
-                        "pand   %%mm1, %[mmx_mask3]\n\t"
-                        "movq   %%mm3, [%%esi + %%edx * 4]\n\t"
-                        "pand   %%mm2, %[mmx_mask3]\n\t"
-                        "movq   %%mm4, [%%esi + %%ebx * 4]\n\t"
-                        "pand   %%mm3, %[mmx_mask3]\n\t"
-                        "psrlq  %%mm0, 1\n\t"
-                        "pand   %%mm4, %[mmx_mask3]\n\t"
-                        "psrlq  %%mm1, 3\n\t"
-                        "pand   %%mm7, %[mmx_mask1]\n\t"
-                        "movq   %%mm6, [%%esi + 12]\n\t"
-                        "psrlq  %%mm2, 3\n\t"
-                        "add    %%esi, 16\n\t"
-                        "psrlq  %%mm3, 3\n\t"
-                        "paddb  %%mm0, %%mm1\n\t"
-                        "psrlq  %%mm4, 3\n\t"
-                        "movq   %%mm1, %%mm6\n\t"
-                        "paddb  %%mm2, %%mm3\n\t"
-                        "paddb  %%mm0, %%mm4\n\t"
-                        "movq   %%mm3, [%%esi + %%edx * 4 - 8]\n\t"
-                        "paddb  %%mm0, %%mm2\n\t"
-                        "movq   %%mm4, [%%esi + %%ebx * 4 - 8]\n\t"
-                        "paddb  %%mm0, [%[adj2]]\n\t"
-                        "pand   %%mm6, %[mmx_mask3]\n\t"
-                        "movq   [%%edi], %%mm0\n\t"
-                        "pand   %%mm5, %[mmx_mask3]\n\t"
-                        "psrlq  %%mm7, 1\n\t"
-                        "pand   %%mm3, %[mmx_mask3]\n\t"
-                        "psrlq  %%mm6, 3\n\t"
-                        "pand   %%mm4, %[mmx_mask3]\n\t"
-                        "psrlq  %%mm5, 3\n\t"
-                        "paddb  %%mm7, %%mm6\n\t"
-                        "add    %%edi, 16\n\t"
-                        "psrlq  %%mm3, 3\n\t"
-                        "psrlq  %%mm4, 3\n\t"
-                        "paddb  %%mm5, %%mm3\n\t"
-                        "paddb  %%mm7, %%mm4\n\t"
-                        "dec    %%ecx\n\t"
-                        "paddb  %%mm7, %%mm5\n\t"
-                        "paddb  %%mm7, [%[adj2]]\n\t"
-                        "movq   [%%edi - 8], %%mm7\n\t"
-                        "jnz    mmx_normal_blur_loop\n\t"
-                        "mov    %[of], %%edi\n\t"
-                        "mov    %[f], %%esi\n\t"
-                        : [f] "=m"(f), [of] "=m"(of)
-                        : [w] "m"(w),
-                          [mmx_mask1] "m"(mmx_mask1),
-                          [mmx_mask3] "m"(mmx_mask3),
-                          [adj2] "m"(adj2)
-                        : "ebx", "ecx", "edx", "esi", "edi");
-#endif           // _MSC_VER
-                    f2 = f + w;  // update these bitches
-                    f3 = f - w;
-                }
-#endif
                 x = (w - 2) & 3;
                 while (x--) {
                     *of++ = DIV_2(f[0]) + DIV_8(f[1]) + DIV_8(f[-1]) + DIV_8(f2[0])
@@ -1072,14 +582,6 @@ mmx_normal_blur_loop:
             f2++;
         }
     }
-
-#ifndef NO_MMX
-#ifdef _MSC_VER  // MSVC asm
-    __asm emms;
-#else   // _MSC_VER, GCC asm
-    __asm__ __volatile__("emms");
-#endif  // _MSC_VER
-#endif
 }
 
 int E_Blur::smp_begin(int max_threads, char[2][2][576], int, int*, int*, int, int) {
