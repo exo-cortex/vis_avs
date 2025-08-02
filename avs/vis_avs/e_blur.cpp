@@ -60,6 +60,55 @@ constexpr Parameter Blur_Info::parameters[];
 E_Blur::E_Blur(AVS_Instance* avs) : Configurable_Effect(avs) {}
 E_Blur::~E_Blur() {}
 
+int threading_stuff(int thread_index,
+                    int num_threads,
+                    unsigned int* f,
+                    unsigned int* of,
+                    int width,
+                    int height,
+                    int* at_top,
+                    int* at_bottom,
+                    int* outh) {
+    if (num_threads < 1) {
+        num_threads = 1;
+    }
+
+    int start_line = (thread_index * height) / num_threads;
+    int end_line;
+
+    if (thread_index >= num_threads - 1) {
+        end_line = height;
+    } else {
+        end_line = ((thread_index + 1) * height) / num_threads;
+    }
+
+    *outh = end_line - start_line;
+    if (*outh < 1) {
+        return 1;
+    }
+
+    int skip_pix = start_line * width;
+
+    f += skip_pix;
+    of += skip_pix;
+
+    if (!thread_index) {
+        *at_top = 1;
+    }
+    if (thread_index >= num_threads - 1) {
+        *at_bottom = 1;
+    }
+
+    return 0;
+}
+
+void top(int this_thread,
+         int max_threads,
+         unsigned int* f,
+         unsigned int* of,
+         int width,
+         int height) {}
+
 void E_Blur::smp_render(int this_thread,
                         int max_threads,
                         char[2][2][576],
@@ -71,36 +120,13 @@ void E_Blur::smp_render(int this_thread,
     unsigned int* f = (unsigned int*)framebuffer;
     unsigned int* of = (unsigned int*)fbout;
 
-    if (max_threads < 1) {
-        max_threads = 1;
-    }
+    int at_top = 0;
+    int at_bottom = 0;
+    int outh;
 
-    int start_l = (this_thread * h) / max_threads;
-    int end_l;
-
-    if (this_thread >= max_threads - 1) {
-        end_l = h;
-    } else {
-        end_l = ((this_thread + 1) * h) / max_threads;
-    }
-
-    int outh = end_l - start_l;
-    if (outh < 1) {
+    if (threading_stuff(
+            this_thread, max_threads, f, of, w, h, &at_top, &at_bottom, &outh)) {
         return;
-    }
-
-    int skip_pix = start_l * w;
-
-    f += skip_pix;
-    of += skip_pix;
-
-    int at_top = 0, at_bottom = 0;
-
-    if (!this_thread) {
-        at_top = 1;
-    }
-    if (this_thread >= max_threads - 1) {
-        at_bottom = 1;
     }
 
     if (this->config.level == BLUR_LIGHT) {
@@ -232,7 +258,7 @@ mmx_light_blur_loop:
 
             movq mm3, [esi+edx*4]
             psrl mm4, 1
-           
+
             paddb mm0, mm4
             pand mm2, mmx_mask4
 
@@ -298,7 +324,7 @@ mmx_light_blur_loop:
             paddb mm7, [adj2]
 
             movq [edi-8],mm7
-            
+
             jnz mmx_light_blur_loop
             mov of, edi
             mov f, esi
@@ -607,7 +633,7 @@ mmx_heavy_blur_loop:
             paddb mm7, [adj2]
 
             movq [edi-8],mm7
-                        
+
             dec ecx
             jnz mmx_heavy_blur_loop
             mov of, edi
@@ -911,7 +937,7 @@ mmx_normal_blur_loop:
             paddb mm7, [adj2]
 
             movq [edi-8],mm7
-            
+
             jnz mmx_normal_blur_loop
             mov of, edi
             mov f, esi
